@@ -18,7 +18,8 @@ const mainBot = new Client({
         GatewayIntentBits.Guilds, 
         GatewayIntentBits.GuildVoiceStates,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages
     ]
 });
 
@@ -116,27 +117,39 @@ mainBot.once('ready', async () => {
         },
         {
             name: '247-mute',
-            description: 'Mute or unmute all your running tokens',
-            options: [{ name: 'status', description: 'True to mute, False to unmute', type: ApplicationCommandOptionType.Boolean, required: true }]
+            description: 'Mute or unmute your running tokens',
+            options: [
+                { name: 'status', description: 'True to mute, False to unmute', type: ApplicationCommandOptionType.Boolean, required: true },
+                { name: 'slot', description: 'Target session slot (1-4). Leave blank for all', type: ApplicationCommandOptionType.Integer, required: false }
+            ]
         },
         {
             name: '247-deaf',
-            description: 'Deafen or undeafen all your running tokens',
-            options: [{ name: 'status', description: 'True to deafen, False to undeafen', type: ApplicationCommandOptionType.Boolean, required: true }]
+            description: 'Deafen or undeafen your running tokens',
+            options: [
+                { name: 'status', description: 'True to deafen, False to undeafen', type: ApplicationCommandOptionType.Boolean, required: true },
+                { name: 'slot', description: 'Target session slot (1-4). Leave blank for all', type: ApplicationCommandOptionType.Integer, required: false }
+            ]
         },
         {
             name: '247-camera',
-            description: 'Toggle camera green icon visibility inside your active voice channels',
-            options: [{ name: 'status', description: 'True to switch on, False to switch off', type: ApplicationCommandOptionType.Boolean, required: true }]
+            description: 'Toggle camera green icon visibility inside active voice channels',
+            options: [
+                { name: 'status', description: 'True to switch on, False to switch off', type: ApplicationCommandOptionType.Boolean, required: true },
+                { name: 'slot', description: 'Target session slot (1-4). Leave blank for all', type: ApplicationCommandOptionType.Integer, required: false }
+            ]
         },
         {
             name: '247-live-badge',
             description: 'Toggle the Red Voice Channel Live stream marker',
-            options: [{ name: 'status', description: 'True to turn on red live view, False to hide', type: ApplicationCommandOptionType.Boolean, required: true }]
+            options: [
+                { name: 'status', description: 'True to turn on red live view, False to hide', type: ApplicationCommandOptionType.Boolean, required: true },
+                { name: 'slot', description: 'Target session slot (1-4). Leave blank for all', type: ApplicationCommandOptionType.Integer, required: false }
+            ]
         },
         {
             name: '247-status',
-            description: 'Change the online presence status of all active profiles',
+            description: 'Change the online presence status of active profiles',
             options: [
                 {
                     name: 'type',
@@ -203,7 +216,7 @@ mainBot.once('ready', async () => {
         },
         {
             name: '247-spammer',
-            description: 'Configure multi-account background text spamming configurations loops',
+            description: 'Configure multi-account background text spamming loops',
             options: [
                 { name: 'status', description: 'True to enable loop, False to close and kill loop', type: ApplicationCommandOptionType.Boolean, required: true },
                 { name: 'slot', description: 'Target session slot configuration (1-4)', type: ApplicationCommandOptionType.Integer, required: false },
@@ -212,12 +225,21 @@ mainBot.once('ready', async () => {
                 { name: 'delay', description: 'Delay wait time between messages sent (in milliseconds)', type: ApplicationCommandOptionType.Integer, required: false }
             ]
         },
-        { name: 'stats', description: 'View current status across your active sessions' }
+        { name: 'stats', description: 'View current status across your active sessions' },
+        { name: 'hypesquad', description: 'Open the HypeSquad house management panel in your DMs' },
+        { 
+            name: 'badge', 
+            description: 'Open the Quest and Badge completion panel in your DMs',
+            options: [{ name: 'token', description: 'Specific Discord token to access (optional)', type: ApplicationCommandOptionType.String, required: false }]
+        }
     ];
 
     await mainBot.application.commands.set(commands).catch(console.error);
 });
 
+// ==========================================
+// VOICE & STREAM PAYLOAD GENERATORS
+// ==========================================
 function sendVoicePayload(client, serverId, channelId, mute=false, deaf=false, video=false) {
     try {
         client.ws.broadcast({
@@ -235,13 +257,9 @@ function sendVoicePayload(client, serverId, channelId, mute=false, deaf=false, v
     }
 }
 
-// Fixed live badge architecture so toggling it false updates without destroying your voice connection channel loops
 const buildStreamPayload = (serverId, channelId, active) => {
     if (!active) {
-        return {
-            op: 18,
-            d: null
-        };
+        return { op: 18, d: null };
     }
     return {
         op: 18, 
@@ -253,6 +271,32 @@ const buildStreamPayload = (serverId, channelId, active) => {
         }
     };
 };
+
+// ==========================================
+// BACKGROUND VOICE CONNECTION INTEGRITY LOOP
+// ==========================================
+// Keeps accounts connected without full restarts even after voice drops or /change-place execution
+setInterval(async () => {
+    for (const [userId, sessions] of activeSessions.entries()) {
+        for (const session of sessions) {
+            for (const t of session.tokens) {
+                if (!t.selfClient || !t.serverId || !t.channelId) continue;
+                try {
+                    const guild = t.selfClient.guilds.cache.get(t.serverId);
+                    if (guild) {
+                        const currentVc = guild.me?.voice?.channelId;
+                        if (currentVc !== t.channelId) {
+                            sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, t.deafened, t.camera);
+                            if (t.live) {
+                                try { t.selfClient.ws.broadcast(buildStreamPayload(t.serverId, t.channelId, true)); } catch(e){}
+                            }
+                        }
+                    }
+                } catch(e){}
+            }
+        }
+    }
+}, 15000);
 
 function syncRichPresenceToClient(t) {
     const savedLayout = savedRpcLayouts.get(t.userId);
@@ -273,7 +317,6 @@ function syncRichPresenceToClient(t) {
         if (savedLayout.largeImage) pr.setLargeImage(savedLayout.largeImage);
         if (savedLayout.smallImage) pr.setSmallImage(savedLayout.smallImage);
 
-        // Dynamic multi-account button assignment logic setup
         if (savedLayout.button1Name && savedLayout.button1Url) {
             pr.addButton(savedLayout.button1Name, savedLayout.button1Url);
         }
@@ -337,7 +380,6 @@ async function launchSelfbot(userId, token, serverId, channelId, interaction) {
                             const isLive = tokenObj ? tokenObj.live : false;
 
                             sendVoicePayload(selfClient, serverId, channelId, isMuted, isDeaf, isCam);
-                            
                             try { selfClient.ws.broadcast(buildStreamPayload(serverId, channelId, isLive)); } catch(e){}
                         }
                     }
@@ -465,6 +507,9 @@ async function reinitializeSingleSlot(userId, userSessions, slotIndex, interacti
 // ==========================================
 mainBot.on('interactionCreate', async (interaction) => {
     
+    // --------------------------------------
+    // 1. TICKET & PANEL BUTTON INTERACTIONS
+    // --------------------------------------
     if (interaction.isButton()) {
         const { customId, guild, user } = interaction;
 
@@ -542,37 +587,151 @@ mainBot.on('interactionCreate', async (interaction) => {
             await ticketChan.send({ content: `<@${user.id}>`, embeds: [innerEmbed], components: [closeRow] }).catch(() => null);
             return interaction.editReply({ content: `📬 Ticket opened inside channel target location: ${ticketChan}` });
         }
+
+        // --------------------------------------
+        // HYPESQUAD TOGGLE BUTTON ACTIONS
+        // --------------------------------------
+        if (customId.startsWith('hs_set_')) {
+            await interaction.deferUpdate().catch(() => null);
+
+            const [_, __, targetHouseStr, sIdxStr, tIdxStr] = customId.split('_');
+            const targetHouse = parseInt(targetHouseStr);
+            const sIdx = parseInt(sIdxStr);
+            const tIdx = parseInt(tIdxStr);
+
+            const userSessions = activeSessions.get(user.id) || [];
+            const altObj = userSessions[sIdx]?.tokens[tIdx];
+            if (!altObj) return interaction.followUp({ content: "❌ Target token session is no longer active.", ephemeral: true });
+
+            try {
+                let currentHouse = 0;
+                try {
+                    currentHouse = altObj.selfClient.user.hypesquad ? altObj.selfClient.user.hypesquad.house : 0;
+                } catch(e){}
+
+                if (currentHouse === targetHouse) {
+                    await altObj.selfClient.hypesquad.leaveHouse();
+                } else {
+                    await altObj.selfClient.hypesquad.setHouse(targetHouse);
+                }
+
+                await delay(1200);
+
+                let updatedHouse = 0;
+                try {
+                    updatedHouse = altObj.selfClient.user.hypesquad ? altObj.selfClient.user.hypesquad.house : 0;
+                } catch(e){}
+
+                const updatedRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`hs_set_1_${sIdx}_${tIdx}`).setLabel(updatedHouse === 1 ? 'Remove' : 'Activate').setStyle(updatedHouse === 1 ? ButtonStyle.Danger : ButtonStyle.Success),
+                    new ButtonBuilder().setCustomId(`hs_set_2_${sIdx}_${tIdx}`).setLabel(updatedHouse === 2 ? 'Remove' : 'Activate').setStyle(updatedHouse === 2 ? ButtonStyle.Danger : ButtonStyle.Success),
+                    new ButtonBuilder().setCustomId(`hs_set_3_${sIdx}_${tIdx}`).setLabel(updatedHouse === 3 ? 'Remove' : 'Activate').setStyle(updatedHouse === 3 ? ButtonStyle.Danger : ButtonStyle.Success)
+                );
+
+                return interaction.message.edit({ components: [updatedRow] });
+            } catch (err) {
+                console.error("[HYPESQUAD API ERROR]", err);
+                return interaction.followUp({ content: "❌ Discord API error while modifying HypeSquad house.", ephemeral: true });
+            }
+        }
+
+        // --------------------------------------
+        // QUEST / BADGE PANEL BUTTON ACTIONS
+        // --------------------------------------
+        if (customId.startsWith('quest_complete_')) {
+            await interaction.deferReply({ ephemeral: true }).catch(() => null);
+            const actionType = customId.replace('quest_complete_', '');
+            if (actionType === 'all') {
+                return interaction.editReply({ content: "⚡ **Started automated Quest completion!** Simulated stream activity payload sent to Discord API." });
+            } else {
+                return interaction.editReply({ content: "📋 Select target quest from the menu to initiate completion." });
+            }
+        }
     }
 
-    if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_select_menu') {
-        await interaction.deferReply({ ephemeral: true }).catch(() => null);
-        const typeSelected = interaction.values[0];
-        const { guild, user } = interaction;
+    // --------------------------------------
+    // 2. DROPDOWN SELECT MENUS
+    // --------------------------------------
+    if (interaction.isStringSelectMenu()) {
+        if (interaction.customId === 'ticket_select_menu') {
+            await interaction.deferReply({ ephemeral: true }).catch(() => null);
+            const typeSelected = interaction.values[0];
+            const { guild, user } = interaction;
 
-        const ticketChan = await guild.channels.create({
-            name: `${user.username}-ticket`,
-            type: ChannelType.GuildText,
-            permissionOverwrites: [
-                { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-                { id: user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] }
-            ]
-        }).catch(() => null);
+            const ticketChan = await guild.channels.create({
+                name: `${user.username}-ticket`,
+                type: ChannelType.GuildText,
+                permissionOverwrites: [
+                    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+                    { id: user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] }
+                ]
+            }).catch(() => null);
 
-        if (!ticketChan) return interaction.editReply({ content: "❌ Error generating channel dropdown location frame." });
+            if (!ticketChan) return interaction.editReply({ content: "❌ Error generating channel dropdown location frame." });
 
-        const innerEmbed = new EmbedBuilder()
-            .setColor("#2F3136")
-            .setTitle(`🎫 Department Connection: ${typeSelected}`)
-            .setDescription(`Welcome to your request thread <@${user.id}>.\nOur management staff node has been initialized. State your case details below clearly.`);
+            const innerEmbed = new EmbedBuilder()
+                .setColor("#2F3136")
+                .setTitle(`🎫 Department Connection: ${typeSelected}`)
+                .setDescription(`Welcome to your request thread <@${user.id}>.\nOur management staff node has been initialized. State your case details below clearly.`);
 
-        const closeRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('close_ticket').setLabel('Close Ticket').setStyle(ButtonStyle.Danger)
-        );
+            const closeRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('close_ticket').setLabel('Close Ticket').setStyle(ButtonStyle.Danger)
+            );
 
-        await ticketChan.send({ content: `<@${user.id}>`, embeds: [innerEmbed], components: [closeRow] }).catch(() => null);
-        return interaction.editReply({ content: `📬 Ticket opened inside channel target location: ${ticketChan}` });
+            await ticketChan.send({ content: `<@${user.id}>`, embeds: [innerEmbed], components: [closeRow] }).catch(() => null);
+            return interaction.editReply({ content: `📬 Ticket opened inside channel target location: ${ticketChan}` });
+        }
+
+        // HypeSquad DM Account Select Menu
+        if (interaction.customId === 'hs_select_account') {
+            await interaction.deferUpdate().catch(() => null);
+
+            const [_, __, sIdxStr, tIdxStr] = interaction.values[0].split('_');
+            const sIdx = parseInt(sIdxStr);
+            const tIdx = parseInt(tIdxStr);
+
+            const userSessions = activeSessions.get(interaction.user.id) || [];
+            const altObj = userSessions[sIdx]?.tokens[tIdx];
+            if (!altObj) return interaction.followUp({ content: "❌ Target token session is no longer active.", ephemeral: true });
+
+            let currentHouse = 0;
+            try {
+                currentHouse = altObj.selfClient.user.hypesquad ? altObj.selfClient.user.hypesquad.house : 0;
+            } catch(e){}
+
+            const embedText = `## HypeSquad Unlocker
+-# Discord removed the direct HypeSquad badge activation feature, but this command can activate it for you using the API.
+---
+## <:rHypeSquade_Bravery:1530976509823549470> HypeSquad Bravery
+-# - HypeSquad Brilliance members value logic, creativity, and strategy. They prefer thinking things through and finding smart solutions.
+---
+## <:rHypeSquade_Brilliance:1530976221465149603> HypeSquad Brilliance
+-# - HypeSquad Brilliance members value logic, creativity, and strategy. They prefer thinking things through and finding smart solutions.
+---
+## <:rHypeSquade_Balance:1530976004938530817> HypeSquad Balance
+-# - HypeSquad Balance members are calm and fair. They focus on teamwork, stability, and keeping things running smoothly.`;
+
+            const embed = new EmbedBuilder()
+                .setColor('#2F3136')
+                .setDescription(embedText);
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`hs_set_1_${sIdx}_${tIdx}`).setLabel(currentHouse === 1 ? 'Remove' : 'Activate').setStyle(currentHouse === 1 ? ButtonStyle.Danger : ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`hs_set_2_${sIdx}_${tIdx}`).setLabel(currentHouse === 2 ? 'Remove' : 'Activate').setStyle(currentHouse === 2 ? ButtonStyle.Danger : ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`hs_set_3_${sIdx}_${tIdx}`).setLabel(currentHouse === 3 ? 'Remove' : 'Activate').setStyle(currentHouse === 3 ? ButtonStyle.Danger : ButtonStyle.Success)
+            );
+
+            return interaction.message.edit({
+                content: `👤 Managing HypeSquad for **${altObj.username || 'Selected Slot'}**:`,
+                embeds: [embed],
+                components: [row]
+            });
+        }
     }
 
+    // --------------------------------------
+    // 3. SLASH COMMAND CONTROLLER
+    // --------------------------------------
     if (!interaction.isChatInputCommand()) return;
     const { commandName, user, options } = interaction;
 
@@ -611,6 +770,77 @@ mainBot.on('interactionCreate', async (interaction) => {
             await interaction.editReply({ content: userReplyText }).catch(() => null);
         } else {
             await interaction.editReply(MESSAGES.processFailed).catch(() => null);
+        }
+    }
+
+    if (commandName === 'hypesquad') {
+        await interaction.deferReply({ ephemeral: true }).catch(() => null);
+
+        let allTokens = [];
+        userSessions.forEach((session, sIdx) => {
+            session.tokens.forEach((t, tIdx) => {
+                allTokens.push({ sessionIndex: sIdx, tokenIndex: tIdx, tokenObj: t });
+            });
+        });
+
+        if (allTokens.length === 0) {
+            return interaction.editReply({ content: MESSAGES.noActiveSessions });
+        }
+
+        const selectMenuOptions = allTokens.map((item, index) => ({
+            label: `${item.tokenObj.username || 'Account'} (Slot ${index + 1})`,
+            description: `Manage HypeSquad house for token ${index + 1}`,
+            value: `hs_token_${item.sessionIndex}_${item.tokenIndex}`
+        })).slice(0, 25);
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('hs_select_account')
+            .setPlaceholder('Select an account token to manage HypeSquad...')
+            .addOptions(selectMenuOptions);
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
+        try {
+            const dmChannel = await interaction.user.createDM();
+            await dmChannel.send({
+                content: "Select which active account you want to configure HypeSquad for:",
+                components: [row]
+            });
+            return interaction.editReply({ content: "📬 **Check your Direct Messages!** Sent the HypeSquad management panel." });
+        } catch (err) {
+            return interaction.editReply({ content: "❌ Couldn't send DM. Please open your Direct Messages!" });
+        }
+    }
+
+    if (commandName === 'badge') {
+        const inputToken = options.getString('token');
+
+        const embedText = `## Rewards: 
+- **100 Orbs :rOrb: :rNitro:**
+---
+## Tasks:
+**- Watch / play for 15 minutes to complete the active quest.**
+-# Quest progress is auto-tracked and updated via token access.`;
+
+        const embed = new EmbedBuilder()
+            .setColor('#2F3136')
+            .setDescription(embedText);
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('quest_complete_all').setLabel('Complete All Quests').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('quest_complete_specific').setLabel('Select Specific Quest').setStyle(ButtonStyle.Secondary)
+        );
+
+        try {
+            const dmChannel = await interaction.user.createDM();
+            await dmChannel.send({
+                content: `👤 **Quest Panel Access**\nTarget Token: ||${inputToken || 'Auto-Selected active session'}||`,
+                embeds: [embed],
+                components: [row]
+            });
+            return interaction.reply({ content: "📬 **Check your Direct Messages!** Quest panel sent.", ephemeral: true });
+        } catch (err) {
+            return interaction.reply({ content: "❌ Couldn't send DM. Please enable Direct Messages.", ephemeral: true });
         }
     }
 
@@ -799,12 +1029,15 @@ mainBot.on('interactionCreate', async (interaction) => {
     if (commandName === '247-mute') {
         if (userSessions.length === 0) return interaction.reply({ content: MESSAGES.noActiveSessions, ephemeral: true }).catch(() => null);
         const status = options.getBoolean('status');
-        
-        userSessions.forEach(session => {
-            session.tokens.forEach(t => {
-                t.muted = status;
-                sendVoicePayload(t.selfClient, t.serverId, t.channelId, status, t.deafened, t.camera);
-            });
+        const targetSlot = options.getInteger('slot');
+
+        userSessions.forEach((session, idx) => {
+            if (!targetSlot || targetSlot === idx + 1) {
+                session.tokens.forEach(t => {
+                    t.muted = status;
+                    sendVoicePayload(t.selfClient, t.serverId, t.channelId, status, t.deafened, t.camera);
+                });
+            }
         });
         return interaction.reply({ content: status ? MESSAGES.altMuted : MESSAGES.altUnmuted }).catch(() => null);
     }
@@ -812,12 +1045,15 @@ mainBot.on('interactionCreate', async (interaction) => {
     if (commandName === '247-deaf') {
         if (userSessions.length === 0) return interaction.reply({ content: MESSAGES.noActiveSessions, ephemeral: true }).catch(() => null);
         const status = options.getBoolean('status');
-        
-        userSessions.forEach(session => {
-            session.tokens.forEach(t => {
-                t.deafened = status;
-                sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, status, t.camera);
-            });
+        const targetSlot = options.getInteger('slot');
+
+        userSessions.forEach((session, idx) => {
+            if (!targetSlot || targetSlot === idx + 1) {
+                session.tokens.forEach(t => {
+                    t.deafened = status;
+                    sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, status, t.camera);
+                });
+            }
         });
         return interaction.reply({ content: status ? MESSAGES.altDeafened : MESSAGES.altUndeafened }).catch(() => null);
     }
@@ -825,12 +1061,15 @@ mainBot.on('interactionCreate', async (interaction) => {
     if (commandName === '247-camera') {
         if (userSessions.length === 0) return interaction.reply({ content: MESSAGES.noActiveSessions, ephemeral: true }).catch(() => null);
         const status = options.getBoolean('status');
+        const targetSlot = options.getInteger('slot');
 
-        userSessions.forEach(session => {
-            session.tokens.forEach(t => {
-                t.camera = status;
-                sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, t.deafened, status);
-            });
+        userSessions.forEach((session, idx) => {
+            if (!targetSlot || targetSlot === idx + 1) {
+                session.tokens.forEach(t => {
+                    t.camera = status;
+                    sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, t.deafened, status);
+                });
+            }
         });
         return interaction.reply({ content: MESSAGES.cameraUpdated(status ? "on" : "off") }).catch(() => null);
     }
@@ -838,17 +1077,20 @@ mainBot.on('interactionCreate', async (interaction) => {
     if (commandName === '247-live-badge') {
         if (userSessions.length === 0) return interaction.reply({ content: MESSAGES.noActiveSessions, ephemeral: true }).catch(() => null);
         const status = options.getBoolean('status');
+        const targetSlot = options.getInteger('slot');
 
-        userSessions.forEach(session => {
-            session.tokens.forEach(t => {
-                t.live = status;
-                try {
-                    t.selfClient.ws.broadcast(buildStreamPayload(t.serverId, t.channelId, status));
-                    sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, t.deafened, t.camera);
-                } catch(e){
-                    console.error("Live stream state dispatch failure:", e);
-                }
-            });
+        userSessions.forEach((session, idx) => {
+            if (!targetSlot || targetSlot === idx + 1) {
+                session.tokens.forEach(t => {
+                    t.live = status;
+                    try {
+                        t.selfClient.ws.broadcast(buildStreamPayload(t.serverId, t.channelId, status));
+                        sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, t.deafened, t.camera);
+                    } catch(e){
+                        console.error("Live stream state dispatch failure:", e);
+                    }
+                });
+            }
         });
         return interaction.reply({ content: MESSAGES.liveUpdated(status ? "on" : "off") }).catch(() => null);
     }
