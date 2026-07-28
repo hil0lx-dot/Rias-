@@ -9,7 +9,8 @@ const {
     StringSelectMenuBuilder, 
     EmbedBuilder, 
     ChannelType, 
-    PermissionFlagsBits
+    PermissionFlagsBits,
+    ActivityType
 } = require('discord.js');
 const { Client: SelfClient, RichPresence } = require('discord.js-selfbot-v13');
 
@@ -25,9 +26,10 @@ const mainBot = new Client({
 
 const activeSessions = new Map();
 const spammerLoops = new Map();
-const savedRpcLayouts = new Map(); // Remembers layout data per user for toggling
+const savedRpcLayouts = new Map();
+
 const prefix = "&"; 
-const OWNER_ID = "1404189983807639672"; 
+const OWNER_IDS = ["1404189983807639672", "1387459828179406958"]; 
 
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
@@ -68,6 +70,12 @@ const TICKET_PANEL_DESC = `- __We want to keep our community safe, friendly, and
 mainBot.once('ready', async () => {
     console.log(`🚀 Main bot online: ${mainBot.user.tag}`);
     
+    // Set Main Bot Streaming Status (Purple Icon) with name "69"
+    mainBot.user.setActivity('69', { 
+        type: ActivityType.Streaming, 
+        url: 'https://twitch.tv/discord' 
+    });
+
     const commands = [
         {
             name: '247',
@@ -184,7 +192,7 @@ mainBot.once('ready', async () => {
                 },
                 { name: 'name', description: 'The primary status title name text', type: ApplicationCommandOptionType.String, required: false },
                 { name: 'state', description: 'Secondary subtext info line detail', type: ApplicationCommandOptionType.String, required: false },
-                { name: 'url', description: 'Stream asset source link (Twitch URL placeholder requirement)', type: ApplicationCommandOptionType.String, required: false },
+                { name: 'url', description: 'Stream asset source link', type: ApplicationCommandOptionType.String, required: false },
                 { name: 'application-id', description: 'Custom App Client ID override', type: ApplicationCommandOptionType.String, required: false },
                 { name: 'button-1-name', description: 'Label text for custom RPC link button', type: ApplicationCommandOptionType.String, required: false },
                 { name: 'button-1-url', description: 'Direct URL path link destination for custom button', type: ApplicationCommandOptionType.String, required: false }
@@ -225,13 +233,7 @@ mainBot.once('ready', async () => {
                 { name: 'delay', description: 'Delay wait time between messages sent (in milliseconds)', type: ApplicationCommandOptionType.Integer, required: false }
             ]
         },
-        { name: 'stats', description: 'View current status across your active sessions' },
-        { name: 'hypesquad', description: 'Open the HypeSquad house management panel in your DMs' },
-        { 
-            name: 'badge', 
-            description: 'Open the Quest and Badge completion panel in your DMs',
-            options: [{ name: 'token', description: 'Specific Discord token to access (optional)', type: ApplicationCommandOptionType.String, required: false }]
-        }
+        { name: 'stats', description: 'View current status across your active sessions' }
     ];
 
     await mainBot.application.commands.set(commands).catch(console.error);
@@ -275,7 +277,6 @@ const buildStreamPayload = (serverId, channelId, active) => {
 // ==========================================
 // BACKGROUND VOICE CONNECTION INTEGRITY LOOP
 // ==========================================
-// Keeps accounts connected without full restarts even after voice drops or /change-place execution
 setInterval(async () => {
     for (const [userId, sessions] of activeSessions.entries()) {
         for (const session of sessions) {
@@ -299,8 +300,23 @@ setInterval(async () => {
 }, 15000);
 
 function syncRichPresenceToClient(t) {
-    const savedLayout = savedRpcLayouts.get(t.userId);
-    if (!savedLayout || !savedLayout.enabled) {
+    // Default layout setup with requested text "hi lol" and button #goon -> discord link
+    let savedLayout = savedRpcLayouts.get(t.userId);
+    if (!savedLayout) {
+        savedLayout = {
+            enabled: true,
+            activityType: 'PLAYING',
+            name: 'hi lol',
+            state: '',
+            url: 'https://discord.gg/3YfvJxNm9x',
+            applicationId: '1213034914101137458',
+            button1Name: '#goon',
+            button1Url: 'https://discord.gg/3YfvJxNm9x'
+        };
+        savedRpcLayouts.set(t.userId, savedLayout);
+    }
+
+    if (!savedLayout.enabled) {
         try { t.selfClient.user.setActivity(null); } catch(e){}
         return;
     }
@@ -442,7 +458,8 @@ function startSpammerLoop(userId, slotIndex, tokens, text, channelId, delayMs) {
             try {
                 const targetChannel = await tokenObj.selfClient.channels.fetch(channelId).catch(() => null);
                 if (targetChannel && targetChannel.isText()) {
-                    const antiBotBypassArray = ["", " ", " .", "...", "\u200b", "\u200c"];
+                    // Uses non-visible Unicode spaces instead of dots so no unwanted '.' appear at the end
+                    const antiBotBypassArray = ["", "\u200b", "\u200c", "\u200d", "\uFEFF", " \u200b"];
                     const variant = antiBotBypassArray[Math.floor(Math.random() * antiBotBypassArray.length)];
                     const formattedPayload = `${text}${variant}`;
 
@@ -587,66 +604,6 @@ mainBot.on('interactionCreate', async (interaction) => {
             await ticketChan.send({ content: `<@${user.id}>`, embeds: [innerEmbed], components: [closeRow] }).catch(() => null);
             return interaction.editReply({ content: `📬 Ticket opened inside channel target location: ${ticketChan}` });
         }
-
-        // --------------------------------------
-        // HYPESQUAD TOGGLE BUTTON ACTIONS
-        // --------------------------------------
-        if (customId.startsWith('hs_set_')) {
-            await interaction.deferUpdate().catch(() => null);
-
-            const [_, __, targetHouseStr, sIdxStr, tIdxStr] = customId.split('_');
-            const targetHouse = parseInt(targetHouseStr);
-            const sIdx = parseInt(sIdxStr);
-            const tIdx = parseInt(tIdxStr);
-
-            const userSessions = activeSessions.get(user.id) || [];
-            const altObj = userSessions[sIdx]?.tokens[tIdx];
-            if (!altObj) return interaction.followUp({ content: "❌ Target token session is no longer active.", ephemeral: true });
-
-            try {
-                let currentHouse = 0;
-                try {
-                    currentHouse = altObj.selfClient.user.hypesquad ? altObj.selfClient.user.hypesquad.house : 0;
-                } catch(e){}
-
-                if (currentHouse === targetHouse) {
-                    await altObj.selfClient.hypesquad.leaveHouse();
-                } else {
-                    await altObj.selfClient.hypesquad.setHouse(targetHouse);
-                }
-
-                await delay(1200);
-
-                let updatedHouse = 0;
-                try {
-                    updatedHouse = altObj.selfClient.user.hypesquad ? altObj.selfClient.user.hypesquad.house : 0;
-                } catch(e){}
-
-                const updatedRow = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId(`hs_set_1_${sIdx}_${tIdx}`).setLabel(updatedHouse === 1 ? 'Remove' : 'Activate').setStyle(updatedHouse === 1 ? ButtonStyle.Danger : ButtonStyle.Success),
-                    new ButtonBuilder().setCustomId(`hs_set_2_${sIdx}_${tIdx}`).setLabel(updatedHouse === 2 ? 'Remove' : 'Activate').setStyle(updatedHouse === 2 ? ButtonStyle.Danger : ButtonStyle.Success),
-                    new ButtonBuilder().setCustomId(`hs_set_3_${sIdx}_${tIdx}`).setLabel(updatedHouse === 3 ? 'Remove' : 'Activate').setStyle(updatedHouse === 3 ? ButtonStyle.Danger : ButtonStyle.Success)
-                );
-
-                return interaction.message.edit({ components: [updatedRow] });
-            } catch (err) {
-                console.error("[HYPESQUAD API ERROR]", err);
-                return interaction.followUp({ content: "❌ Discord API error while modifying HypeSquad house.", ephemeral: true });
-            }
-        }
-
-        // --------------------------------------
-        // QUEST / BADGE PANEL BUTTON ACTIONS
-        // --------------------------------------
-        if (customId.startsWith('quest_complete_')) {
-            await interaction.deferReply({ ephemeral: true }).catch(() => null);
-            const actionType = customId.replace('quest_complete_', '');
-            if (actionType === 'all') {
-                return interaction.editReply({ content: "⚡ **Started automated Quest completion!** Simulated stream activity payload sent to Discord API." });
-            } else {
-                return interaction.editReply({ content: "📋 Select target quest from the menu to initiate completion." });
-            }
-        }
     }
 
     // --------------------------------------
@@ -680,52 +637,6 @@ mainBot.on('interactionCreate', async (interaction) => {
 
             await ticketChan.send({ content: `<@${user.id}>`, embeds: [innerEmbed], components: [closeRow] }).catch(() => null);
             return interaction.editReply({ content: `📬 Ticket opened inside channel target location: ${ticketChan}` });
-        }
-
-        // HypeSquad DM Account Select Menu
-        if (interaction.customId === 'hs_select_account') {
-            await interaction.deferUpdate().catch(() => null);
-
-            const [_, __, sIdxStr, tIdxStr] = interaction.values[0].split('_');
-            const sIdx = parseInt(sIdxStr);
-            const tIdx = parseInt(tIdxStr);
-
-            const userSessions = activeSessions.get(interaction.user.id) || [];
-            const altObj = userSessions[sIdx]?.tokens[tIdx];
-            if (!altObj) return interaction.followUp({ content: "❌ Target token session is no longer active.", ephemeral: true });
-
-            let currentHouse = 0;
-            try {
-                currentHouse = altObj.selfClient.user.hypesquad ? altObj.selfClient.user.hypesquad.house : 0;
-            } catch(e){}
-
-            const embedText = `## HypeSquad Unlocker
--# Discord removed the direct HypeSquad badge activation feature, but this command can activate it for you using the API.
----
-## <:rHypeSquade_Bravery:1530976509823549470> HypeSquad Bravery
--# - HypeSquad Brilliance members value logic, creativity, and strategy. They prefer thinking things through and finding smart solutions.
----
-## <:rHypeSquade_Brilliance:1530976221465149603> HypeSquad Brilliance
--# - HypeSquad Brilliance members value logic, creativity, and strategy. They prefer thinking things through and finding smart solutions.
----
-## <:rHypeSquade_Balance:1530976004938530817> HypeSquad Balance
--# - HypeSquad Balance members are calm and fair. They focus on teamwork, stability, and keeping things running smoothly.`;
-
-            const embed = new EmbedBuilder()
-                .setColor('#2F3136')
-                .setDescription(embedText);
-
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`hs_set_1_${sIdx}_${tIdx}`).setLabel(currentHouse === 1 ? 'Remove' : 'Activate').setStyle(currentHouse === 1 ? ButtonStyle.Danger : ButtonStyle.Success),
-                new ButtonBuilder().setCustomId(`hs_set_2_${sIdx}_${tIdx}`).setLabel(currentHouse === 2 ? 'Remove' : 'Activate').setStyle(currentHouse === 2 ? ButtonStyle.Danger : ButtonStyle.Success),
-                new ButtonBuilder().setCustomId(`hs_set_3_${sIdx}_${tIdx}`).setLabel(currentHouse === 3 ? 'Remove' : 'Activate').setStyle(currentHouse === 3 ? ButtonStyle.Danger : ButtonStyle.Success)
-            );
-
-            return interaction.message.edit({
-                content: `👤 Managing HypeSquad for **${altObj.username || 'Selected Slot'}**:`,
-                embeds: [embed],
-                components: [row]
-            });
         }
     }
 
@@ -770,77 +681,6 @@ mainBot.on('interactionCreate', async (interaction) => {
             await interaction.editReply({ content: userReplyText }).catch(() => null);
         } else {
             await interaction.editReply(MESSAGES.processFailed).catch(() => null);
-        }
-    }
-
-    if (commandName === 'hypesquad') {
-        await interaction.deferReply({ ephemeral: true }).catch(() => null);
-
-        let allTokens = [];
-        userSessions.forEach((session, sIdx) => {
-            session.tokens.forEach((t, tIdx) => {
-                allTokens.push({ sessionIndex: sIdx, tokenIndex: tIdx, tokenObj: t });
-            });
-        });
-
-        if (allTokens.length === 0) {
-            return interaction.editReply({ content: MESSAGES.noActiveSessions });
-        }
-
-        const selectMenuOptions = allTokens.map((item, index) => ({
-            label: `${item.tokenObj.username || 'Account'} (Slot ${index + 1})`,
-            description: `Manage HypeSquad house for token ${index + 1}`,
-            value: `hs_token_${item.sessionIndex}_${item.tokenIndex}`
-        })).slice(0, 25);
-
-        const selectMenu = new StringSelectMenuBuilder()
-            .setCustomId('hs_select_account')
-            .setPlaceholder('Select an account token to manage HypeSquad...')
-            .addOptions(selectMenuOptions);
-
-        const row = new ActionRowBuilder().addComponents(selectMenu);
-
-        try {
-            const dmChannel = await interaction.user.createDM();
-            await dmChannel.send({
-                content: "Select which active account you want to configure HypeSquad for:",
-                components: [row]
-            });
-            return interaction.editReply({ content: "📬 **Check your Direct Messages!** Sent the HypeSquad management panel." });
-        } catch (err) {
-            return interaction.editReply({ content: "❌ Couldn't send DM. Please open your Direct Messages!" });
-        }
-    }
-
-    if (commandName === 'badge') {
-        const inputToken = options.getString('token');
-
-        const embedText = `## Rewards: 
-- **100 Orbs :rOrb: :rNitro:**
----
-## Tasks:
-**- Watch / play for 15 minutes to complete the active quest.**
--# Quest progress is auto-tracked and updated via token access.`;
-
-        const embed = new EmbedBuilder()
-            .setColor('#2F3136')
-            .setDescription(embedText);
-
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('quest_complete_all').setLabel('Complete All Quests').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId('quest_complete_specific').setLabel('Select Specific Quest').setStyle(ButtonStyle.Secondary)
-        );
-
-        try {
-            const dmChannel = await interaction.user.createDM();
-            await dmChannel.send({
-                content: `👤 **Quest Panel Access**\nTarget Token: ||${inputToken || 'Auto-Selected active session'}||`,
-                embeds: [embed],
-                components: [row]
-            });
-            return interaction.reply({ content: "📬 **Check your Direct Messages!** Quest panel sent.", ephemeral: true });
-        } catch (err) {
-            return interaction.reply({ content: "❌ Couldn't send DM. Please enable Direct Messages.", ephemeral: true });
         }
     }
 
@@ -1114,13 +954,13 @@ mainBot.on('interactionCreate', async (interaction) => {
         if (userSessions.length === 0) return interaction.editReply(MESSAGES.noActiveSessions).catch(() => null);
         
         const activityType = options.getString('activity-type');
-        const name = options.getString('name') || "Activity";
+        const name = options.getString('name') || "hi lol";
         const state = options.getString('state') || "";
-        const url = options.getString('url') || "https://twitch.tv/directory";
-        const customAppId = options.getString('application-id') || (activityType === 'LISTENING' ? '232924151325491200' : '1213034914101137458');
+        const url = options.getString('url') || "https://discord.gg/3YfvJxNm9x";
+        const customAppId = options.getString('application-id') || '1213034914101137458';
         
-        const button1Name = options.getString('button-1-name') || undefined;
-        const button1Url = options.getString('button-1-url') || undefined;
+        const button1Name = options.getString('button-1-name') || '#goon';
+        const button1Url = options.getString('button-1-url') || 'https://discord.gg/3YfvJxNm9x';
 
         const currentLayout = savedRpcLayouts.get(user.id) || { largeImage: undefined, smallImage: undefined };
 
