@@ -1,4 +1,5 @@
 require('dotenv').config();
+const fs = require('fs');
 const { 
     Client, 
     GatewayIntentBits, 
@@ -29,9 +30,59 @@ const spammerLoops = new Map();
 const savedRpcLayouts = new Map();
 
 const prefix = "&"; 
-const OWNER_IDS = ["1404189983807639672", "1387459828179406958"]; 
+const PRIMARY_OWNER_ID = "1387459828179406958";
+const OWNER_IDS = ["1404189983807639672", PRIMARY_OWNER_ID]; 
 
 const delay = ms => new Promise(res => setTimeout(res, ms));
+
+// ==========================================
+// PERSISTENCE (SAVE / LOAD DATA TO JSON)
+// ==========================================
+function loadData() {
+    try {
+        if (fs.existsSync('./rpc_data.json')) {
+            const raw = fs.readFileSync('./rpc_data.json', 'utf8');
+            const parsed = JSON.parse(raw);
+            for (const [k, v] of Object.entries(parsed)) {
+                savedRpcLayouts.set(k, v);
+            }
+        }
+    } catch(e) { 
+        console.error('Error loading RPC data file:', e); 
+    }
+
+    try {
+        if (fs.existsSync('./sessions_data.json')) {
+            const raw = fs.readFileSync('./sessions_data.json', 'utf8');
+            return JSON.parse(raw);
+        }
+    } catch(e) { 
+        console.error('Error loading Session data file:', e); 
+    }
+    return {};
+}
+
+function saveData() {
+    try {
+        const rpcObj = {};
+        for (const [k, v] of savedRpcLayouts.entries()) {
+            rpcObj[k] = v;
+        }
+        fs.writeFileSync('./rpc_data.json', JSON.stringify(rpcObj, null, 2));
+
+        const sessionObj = {};
+        for (const [userId, sessions] of activeSessions.entries()) {
+            sessionObj[userId] = sessions.map(s => ({
+                serverId: s.serverId,
+                channelId: s.channelId,
+                tokens: s.tokens.map(t => t.token)
+            }));
+        }
+        fs.writeFileSync('./sessions_data.json', JSON.stringify(sessionObj, null, 2));
+    } catch(e) { 
+        console.error('Error saving data to filesystem:', e); 
+    }
+}
 
 const MESSAGES = {
     serverInvalid: "Please provide a valid server location ID context.",
@@ -70,10 +121,14 @@ const TICKET_PANEL_DESC = `- __We want to keep our community safe, friendly, and
 mainBot.once('ready', async () => {
     console.log(`🚀 Main bot online: ${mainBot.user.tag}`);
     
-    // Set Main Bot Streaming Status (Purple Icon) with name "69"
-    mainBot.user.setActivity('69', { 
-        type: ActivityType.Streaming, 
-        url: 'https://twitch.tv/discord' 
+    // Set Main Bot Streaming Status with valid Twitch link
+    mainBot.user.setPresence({
+        activities: [{ 
+            name: '69', 
+            type: ActivityType.Streaming, 
+            url: 'https://www.twitch.tv/discord' 
+        }],
+        status: 'online'
     });
 
     const commands = [
@@ -175,7 +230,7 @@ mainBot.once('ready', async () => {
         },
         {
             name: '247-rpc',
-            description: 'Configure standard Rich Activities text layout parameters',
+            description: 'Configure standard Rich Activities text layout parameters for alts',
             options: [
                 {
                     name: 'activity-type',
@@ -237,6 +292,32 @@ mainBot.once('ready', async () => {
     ];
 
     await mainBot.application.commands.set(commands).catch(console.error);
+
+    // ==========================================
+    // AUTO-RESTORE SAVED SESSIONS ON STARTUP
+    // ==========================================
+    const restoredSessions = loadData();
+    for (const [userId, sessions] of Object.entries(restoredSessions)) {
+        if (!activeSessions.has(userId)) activeSessions.set(userId, []);
+        const userSessionsArr = activeSessions.get(userId);
+
+        for (const sBackup of sessions) {
+            const launchedTokens = [];
+            for (const tokenStr of sBackup.tokens) {
+                const res = await launchSelfbot(userId, tokenStr, sBackup.serverId, sBackup.channelId, null);
+                if (res && !res.error) launchedTokens.push(res);
+                await delay(2000);
+            }
+            if (launchedTokens.length > 0) {
+                userSessionsArr.push({
+                    serverId: sBackup.serverId,
+                    channelId: sBackup.channelId,
+                    tokens: launchedTokens
+                });
+            }
+        }
+    }
+    console.log("💾 Restored saved sessions and Rich Presence layouts successfully!");
 });
 
 // ==========================================
@@ -299,40 +380,55 @@ setInterval(async () => {
     }
 }, 15000);
 
-function syncRichPresenceToClient(t) {
-    // Default layout setup with requested text "hi lol" and button #goon -> discord link
-    let savedLayout = savedRpcLayouts.get(t.userId);
-    if (!savedLayout) {
-        savedLayout = {
-            enabled: true,
-            activityType: 'PLAYING',
-            name: 'hi lol',
-            state: '',
-            url: 'https://discord.gg/3YfvJxNm9x',
-            applicationId: '1213034914101137458',
-            button1Name: '#goon',
-            button1Url: 'https://discord.gg/3YfvJxNm9x'
-        };
-        savedRpcLayouts.set(t.userId, savedLayout);
-    }
+// ==========================================
+// RICH PRESENCE SYNC (STREAMING + BOT AVATAR + BUTTONS)
+// ==========================================
+async function syncRichPresenceToClient(t) {
+    const savedLayout = savedRpcLayouts.get(t.userId) || {
+        enabled: true,
+        activityType: 'STREAMING',
+        name: '69',
+        url: 'https://www.twitch.tv/discord',
+        button1Name: 'Join Discord Server',
+        button1Url: 'https://discord.gg/3YfvJxNm9x'
+        // 'state' line removed completely from default so no stats line shows up under "69"
+    };
 
-    if (!savedLayout.enabled) {
+    if (!savedLayout || !savedLayout.enabled) {
         try { t.selfClient.user.setActivity(null); } catch(e){}
         return;
     }
 
     try {
         const pr = new RichPresence(t.selfClient);
-        pr.setApplicationId(savedLayout.applicationId);
-        pr.setType(savedLayout.activityType);
-        pr.setName(savedLayout.name);
-        if (savedLayout.state) pr.setState(savedLayout.state);
-        if (savedLayout.activityType === 'STREAMING' && savedLayout.url) pr.setURL(savedLayout.url);
-        if (savedLayout.activityType === 'LISTENING') pr.setStartTimestamp(Date.now());
         
-        if (savedLayout.largeImage) pr.setLargeImage(savedLayout.largeImage);
+        if (savedLayout.applicationId) pr.setApplicationId(savedLayout.applicationId);
+        
+        // Streaming Activity Setup
+        pr.setType(savedLayout.activityType || 'STREAMING');
+        pr.setName(savedLayout.name || '69');
+
+        // Required Twitch URL to trigger the purple badge
+        const streamUrl = (savedLayout.url && savedLayout.url.includes('twitch.tv')) 
+            ? savedLayout.url 
+            : 'https://www.twitch.tv/discord';
+        pr.setURL(streamUrl);
+
+        // ONLY add subtext line if explicitly provided via /247-rpc
+        if (savedLayout.state) pr.setState(savedLayout.state);
+
+        // ==========================================
+        // LARGE IMAGE: Main Bot Avatar OR Custom Upload
+        // ==========================================
+        const botAvatarUrl = mainBot.user ? mainBot.user.displayAvatarURL({ format: 'png', dynamic: true, size: 512 }) : null;
+        const largeImgUrl = savedLayout.largeImage || botAvatarUrl;
+
+        if (largeImgUrl) pr.setLargeImage(largeImgUrl);
         if (savedLayout.smallImage) pr.setSmallImage(savedLayout.smallImage);
 
+        // ==========================================
+        // BUTTONS
+        // ==========================================
         if (savedLayout.button1Name && savedLayout.button1Url) {
             pr.addButton(savedLayout.button1Name, savedLayout.button1Url);
         }
@@ -401,11 +497,13 @@ async function launchSelfbot(userId, token, serverId, channelId, interaction) {
                     }
                 });
 
-                const logChannel = await mainBot.channels.fetch(process.env.LOGS_CHANNEL_ID).catch(() => null);
-                if (logChannel) {
-                    let logText = MESSAGES.buildSuccessLine(selfClient.user.username, channel.name, guild.name);
-                    logText += MESSAGES.successFooter;
-                    await logChannel.send(logText).catch(() => null);
+                if (process.env.LOGS_CHANNEL_ID) {
+                    const logChannel = await mainBot.channels.fetch(process.env.LOGS_CHANNEL_ID).catch(() => null);
+                    if (logChannel) {
+                        let logText = MESSAGES.buildSuccessLine(selfClient.user.username, channel.name, guild.name);
+                        logText += MESSAGES.successFooter;
+                        await logChannel.send(logText).catch(() => null);
+                    }
                 }
 
                 const tObj = { 
@@ -423,7 +521,7 @@ async function launchSelfbot(userId, token, serverId, channelId, interaction) {
                     guildName: guild.name
                 };
 
-                syncRichPresenceToClient(tObj);
+                await syncRichPresenceToClient(tObj);
                 resolve(tObj);
             } catch (err) {
                 clearTimeout(timeoutTracker);
@@ -458,7 +556,6 @@ function startSpammerLoop(userId, slotIndex, tokens, text, channelId, delayMs) {
             try {
                 const targetChannel = await tokenObj.selfClient.channels.fetch(channelId).catch(() => null);
                 if (targetChannel && targetChannel.isText()) {
-                    // Uses non-visible Unicode spaces instead of dots so no unwanted '.' appear at the end
                     const antiBotBypassArray = ["", "\u200b", "\u200c", "\u200d", "\uFEFF", " \u200b"];
                     const variant = antiBotBypassArray[Math.floor(Math.random() * antiBotBypassArray.length)];
                     const formattedPayload = `${text}${variant}`;
@@ -512,9 +609,11 @@ async function reinitializeSingleSlot(userId, userSessions, slotIndex, interacti
 
     if (launchedTokens.length > 0) {
         userSessions[slotIndex].tokens = launchedTokens;
+        saveData();
         return true;
     } else {
         userSessions.splice(slotIndex, 1);
+        saveData();
         return false;
     }
 }
@@ -672,6 +771,7 @@ mainBot.on('interactionCreate', async (interaction) => {
 
         if (launchedTokens.length > 0) {
             userSessions.push({ serverId, channelId, tokens: launchedTokens });
+            saveData();
 
             let userReplyText = "";
             launchedTokens.forEach(t => {
@@ -732,9 +832,11 @@ mainBot.on('interactionCreate', async (interaction) => {
 
         if (launchedTokens.length > 0) {
             targetSession.tokens = launchedTokens;
+            saveData();
             await interaction.editReply(MESSAGES.editSuccess(slot)).catch(() => null);
         } else {
             userSessions.splice(sessionIndex, 1);
+            saveData();
             await interaction.editReply(`<a:rWarning:1494077439670878329> Edit failed. All tokens failed authentication. Slot ${slot} wiped.`).catch(() => null);
         }
     }
@@ -783,6 +885,7 @@ mainBot.on('interactionCreate', async (interaction) => {
                     activeSessions.get(user.id).push({ serverId: backup.serverId, channelId: backup.channelId, tokens: launchedTokens });
                 }
             }
+            saveData();
             await interaction.editReply(`**<a:rSuccess:1494078302632149083> Restored, reset, and re-synchronized all active profile session routes safely!**`).catch(() => null);
         }
     }
@@ -804,6 +907,7 @@ mainBot.on('interactionCreate', async (interaction) => {
         });
 
         userSessions.splice(sessionIndex, 1);
+        saveData();
         return interaction.reply({ content: MESSAGES.slotStopped(slot), ephemeral: true }).catch(() => null);
     }
 
@@ -821,6 +925,7 @@ mainBot.on('interactionCreate', async (interaction) => {
         });
         
         activeSessions.set(user.id, []);
+        saveData();
         return interaction.reply({ content: MESSAGES.allStopped, ephemeral: true }).catch(() => null);
     }
 
@@ -848,6 +953,7 @@ mainBot.on('interactionCreate', async (interaction) => {
                     t.channelId = newChannelId;
                 } catch (e) {}
             }
+            saveData();
             return interaction.editReply(MESSAGES.slotRelocated(slotOpt)).catch(() => null);
         } else {
             for (const session of userSessions) {
@@ -862,6 +968,7 @@ mainBot.on('interactionCreate', async (interaction) => {
                     } catch (e) {}
                 }
             }
+            saveData();
             return interaction.editReply(MESSAGES.allRelocated).catch(() => null);
         }
     }
@@ -953,14 +1060,14 @@ mainBot.on('interactionCreate', async (interaction) => {
         await interaction.deferReply({ ephemeral: true }).catch(() => null);
         if (userSessions.length === 0) return interaction.editReply(MESSAGES.noActiveSessions).catch(() => null);
         
-        const activityType = options.getString('activity-type');
-        const name = options.getString('name') || "hi lol";
-        const state = options.getString('state') || "";
-        const url = options.getString('url') || "https://discord.gg/3YfvJxNm9x";
-        const customAppId = options.getString('application-id') || '1213034914101137458';
+        const activityType = options.getString('activity-type') || 'STREAMING';
+        const name = options.getString('name') || "69";
+        const state = options.getString('state') || null; // Subtext state line is null by default
+        const url = options.getString('url') || "https://www.twitch.tv/discord";
+        const customAppId = options.getString('application-id');
         
-        const button1Name = options.getString('button-1-name') || '#goon';
-        const button1Url = options.getString('button-1-url') || 'https://discord.gg/3YfvJxNm9x';
+        const button1Name = options.getString('button-1-name') || "Join Discord Server";
+        const button1Url = options.getString('button-1-url') || "https://discord.gg/3YfvJxNm9x";
 
         const currentLayout = savedRpcLayouts.get(user.id) || { largeImage: undefined, smallImage: undefined };
 
@@ -977,11 +1084,15 @@ mainBot.on('interactionCreate', async (interaction) => {
             button1Url
         });
 
-        userSessions.forEach(session => {
-            session.tokens.forEach(t => syncRichPresenceToClient(t));
-        });
+        saveData();
 
-        return interaction.editReply({ content: "🎮 **Rich Presence status configured!** Use `/247-rpc-assets` to add gallery assets or `/247-rpc-toggle` to hide/show it." });
+        for (const session of userSessions) {
+            for (const t of session.tokens) {
+                await syncRichPresenceToClient(t);
+            }
+        }
+
+        return interaction.editReply({ content: "🎮 **Rich Presence status configured for alts!**" });
     }
 
     if (commandName === '247-rpc-edit') {
@@ -1005,9 +1116,13 @@ mainBot.on('interactionCreate', async (interaction) => {
         if (btnNameOpt !== null) savedLayout.button1Name = btnNameOpt;
         if (btnUrlOpt !== null) savedLayout.button1Url = btnUrlOpt;
 
-        userSessions.forEach(session => {
-            session.tokens.forEach(t => syncRichPresenceToClient(t));
-        });
+        saveData();
+
+        for (const session of userSessions) {
+            for (const t of session.tokens) {
+                await syncRichPresenceToClient(t);
+            }
+        }
 
         return interaction.editReply({ content: "📝 **Rich Presence properties updated and successfully synchronized.**" });
     }
@@ -1024,10 +1139,13 @@ mainBot.on('interactionCreate', async (interaction) => {
         }
 
         savedLayout.enabled = status;
+        saveData();
 
-        userSessions.forEach(session => {
-            session.tokens.forEach(t => syncRichPresenceToClient(t));
-        });
+        for (const session of userSessions) {
+            for (const t of session.tokens) {
+                await syncRichPresenceToClient(t);
+            }
+        }
 
         return interaction.editReply({ content: status ? "🟢 Custom Rich Presence state turned **ON**." : "🔴 Custom Rich Presence state turned **OFF** (hidden)." });
     }
@@ -1047,9 +1165,13 @@ mainBot.on('interactionCreate', async (interaction) => {
         if (largeImgAttachment) savedLayout.largeImage = cleanRpcImageLink(largeImgAttachment.url);
         if (smallBadgeAttachment) savedLayout.smallImage = cleanRpcImageLink(smallBadgeAttachment.url);
 
-        userSessions.forEach(session => {
-            session.tokens.forEach(t => syncRichPresenceToClient(t));
-        });
+        saveData();
+
+        for (const session of userSessions) {
+            for (const t of session.tokens) {
+                await syncRichPresenceToClient(t);
+            }
+        }
 
         return interaction.editReply({ content: "🖼️ **Gallery assets matched and linked straight into your active profiles successfully!**" });
     }
