@@ -88,9 +88,9 @@ const MESSAGES = {
     serverInvalid: "Please provide a valid server location ID context.",
     channelInvalid: "Please provide a valid connection channel destination ID context.",
     tokenInvalid: "An unexpected authorization checkpoint error occurred.",
-    maxSessionsReached: "<a:rWarning:1494077439670878329> You have **reached your maximum limit** of 4 simultaneous sessions.\n<a:rArrow:1493252548826763275> Use /247-stopall to clean them up",
+    maxSessionsReached: "<a:rWarning:1494077439670878329> You have **reached your maximum limit** of 4 simultaneous sessions.\n<a:rArrow:1493252548826763275> Use `/247-stopall` to clean them up",
     noActiveSessions: "<a:rWarning:1494077439670878329> You don't have any running **sessions** !",
-    allStopped: "<a:rSuccess:1494078302632149083> **All active sessions and tokens have been fully cleared.**\n\n<a:rArrow:1493252548826763275> **Use /247 to run it again <a:rRitaMaid:1494319991187574794>**",
+    allStopped: "<a:rSuccess:1494078302632149083> **All active sessions and tokens have been fully cleared.**\n\n<a:rArrow:1493252548826763275> **Use /247 to run it again <:rRitaMaid:1494319991187574794>**",
     slotStopped: (slot) => `<a:rSuccess:1494078302632149083> **Session slot ${slot} was fully shut down and tokens disconnected.**`,
     slotRelocated: (slot) => `<a:rSuccess:1494078302632149083> Relocated session slot **${slot}** to its new location successfully!`,
     allRelocated: "<a:rSuccess:1494078302632149083> Relocated all active tokens across your sessions **successfully**",
@@ -106,8 +106,8 @@ const MESSAGES = {
     editSuccess: (slot) => `**<a:rSuccess:1494078302632149083> Session slot ${slot} tokens updated and deployed successfully!**`,
     restartingAll: `**🔄 Restarting all active sessions and re-verifying connection gateways...**`,
     restartingSlot: (slot) => `**🔄 Restarting active session slot ${slot}...**`,
-    buildSuccessLine: (username, channelName, guildName) => `<a:rSuccess:1494078302632149083> • The **${username}** has successfully joined **${channelName}** on the server **${guildName}**\n`,
-    successFooter: `i will stay there 24/7 don't worry <a:rRitaMaid:1494319991187574794>\n\n<a:rPurple:1493250339359555654> if u want to change the channel or server just run the cmd /change-place \`and follow the step\` <a:rWarn:1494077016939430039>`
+    buildSuccessLine: (username, channelName, guildName) => `⁘<a:rSuccess:1494078302632149083> • The **${username}** has successfully joined **${channelName}** on the server **${guildName}**\n`,
+    successFooter: `- i will stay there 24/7 don't worry <:rRitaMaid:1494319991187574794>\n\n---\n\n-# <a:rPurple:1493250339359555654> if u want to change the channel or server just run the cmd /change-place and follow the ֆtep ⁘`
 };
 
 const TICKET_PANEL_DESC = `- __We want to keep our community safe, friendly, and fun for everyone. To help with this, we have a report system you can use to tell us about any problems or questions you have. Here's a quick look at the different parts of our report system:__  ⁘\n\n` +
@@ -121,7 +121,7 @@ const TICKET_PANEL_DESC = `- __We want to keep our community safe, friendly, and
 mainBot.once('ready', async () => {
     console.log(`🚀 Main bot online: ${mainBot.user.tag}`);
     
-    // Set Main Bot Streaming Status with valid Twitch link
+    // Set Main Bot Streaming Status
     mainBot.user.setPresence({
         activities: [{ 
             name: '69', 
@@ -144,6 +144,16 @@ mainBot.once('ready', async () => {
                 { name: 'token4', description: 'Fourth account token', type: ApplicationCommandOptionType.String, required: false },
                 { name: 'token5', description: 'Fifth account token', type: ApplicationCommandOptionType.String, required: false },
             ]
+        },
+        { 
+            name: '247-pause',
+            description: 'Pause a running session temporarily (leaves voice channel)',
+            options: [{ name: 'slot', description: 'The session slot number to pause (1-4)', type: ApplicationCommandOptionType.Integer, required: true }]
+        },
+        { 
+            name: '247-resume',
+            description: 'Resume a paused session back into the voice channel',
+            options: [{ name: 'slot', description: 'The session slot number to resume (1-4)', type: ApplicationCommandOptionType.Integer, required: true }]
         },
         { 
             name: '247-stop', 
@@ -362,7 +372,7 @@ setInterval(async () => {
     for (const [userId, sessions] of activeSessions.entries()) {
         for (const session of sessions) {
             for (const t of session.tokens) {
-                if (!t.selfClient || !t.serverId || !t.channelId) continue;
+                if (!t.selfClient || !t.serverId || !t.channelId || t.paused) continue;
                 try {
                     const guild = t.selfClient.guilds.cache.get(t.serverId);
                     if (guild) {
@@ -381,7 +391,7 @@ setInterval(async () => {
 }, 15000);
 
 // ==========================================
-// RICH PRESENCE SYNC (STREAMING + BOT AVATAR + BUTTONS)
+// RICH PRESENCE SYNC
 // ==========================================
 async function syncRichPresenceToClient(t) {
     const savedLayout = savedRpcLayouts.get(t.userId) || {
@@ -391,7 +401,6 @@ async function syncRichPresenceToClient(t) {
         url: 'https://www.twitch.tv/discord',
         button1Name: 'Join Discord Server',
         button1Url: 'https://discord.gg/3YfvJxNm9x'
-        // 'state' line removed completely from default so no stats line shows up under "69"
     };
 
     if (!savedLayout || !savedLayout.enabled) {
@@ -404,31 +413,22 @@ async function syncRichPresenceToClient(t) {
         
         if (savedLayout.applicationId) pr.setApplicationId(savedLayout.applicationId);
         
-        // Streaming Activity Setup
         pr.setType(savedLayout.activityType || 'STREAMING');
         pr.setName(savedLayout.name || '69');
 
-        // Required Twitch URL to trigger the purple badge
         const streamUrl = (savedLayout.url && savedLayout.url.includes('twitch.tv')) 
             ? savedLayout.url 
             : 'https://www.twitch.tv/discord';
         pr.setURL(streamUrl);
 
-        // ONLY add subtext line if explicitly provided via /247-rpc
         if (savedLayout.state) pr.setState(savedLayout.state);
 
-        // ==========================================
-        // LARGE IMAGE: Main Bot Avatar OR Custom Upload
-        // ==========================================
         const botAvatarUrl = mainBot.user ? mainBot.user.displayAvatarURL({ format: 'png', dynamic: true, size: 512 }) : null;
         const largeImgUrl = savedLayout.largeImage || botAvatarUrl;
 
         if (largeImgUrl) pr.setLargeImage(largeImgUrl);
         if (savedLayout.smallImage) pr.setSmallImage(savedLayout.smallImage);
 
-        // ==========================================
-        // BUTTONS
-        // ==========================================
         if (savedLayout.button1Name && savedLayout.button1Url) {
             pr.addButton(savedLayout.button1Name, savedLayout.button1Url);
         }
@@ -480,11 +480,13 @@ async function launchSelfbot(userId, token, serverId, channelId, interaction) {
 
                 selfClient.on('voiceStateUpdate', async (oldState, newState) => {
                     if (newState.member.id === selfClient.user.id) {
+                        const sessionReference = activeSessions.get(userId)?.find(s => s.channelId === channelId);
+                        const tokenObj = sessionReference?.tokens.find(t => t.token === token);
+                        
+                        if (tokenObj && tokenObj.paused) return; // Ignore if user intentionally paused
+
                         if (!newState.channelId || newState.channelId !== channelId) {
                             await delay(4000);
-                            
-                            const sessionReference = activeSessions.get(userId)?.find(s => s.channelId === channelId);
-                            const tokenObj = sessionReference?.tokens.find(t => t.token === token);
                             
                             const isMuted = tokenObj ? tokenObj.muted : false;
                             const isDeaf = tokenObj ? tokenObj.deafened : false;
@@ -497,12 +499,23 @@ async function launchSelfbot(userId, token, serverId, channelId, interaction) {
                     }
                 });
 
+                // ==========================================
+                // EMBED LOG NOTIFICATION
+                // ==========================================
                 if (process.env.LOGS_CHANNEL_ID) {
                     const logChannel = await mainBot.channels.fetch(process.env.LOGS_CHANNEL_ID).catch(() => null);
                     if (logChannel) {
-                        let logText = MESSAGES.buildSuccessLine(selfClient.user.username, channel.name, guild.name);
-                        logText += MESSAGES.successFooter;
-                        await logChannel.send(logText).catch(() => null);
+                        const logEmbed = new EmbedBuilder()
+                            .setColor('#2F3136')
+                            .setDescription(
+                                `## New Active Session Appeared !\n\n` +
+                                `---\n\n` +
+                                `⁘<a:rSuccess:1494078302632149083> • The **${selfClient.user.username}** has successfully joined **${channel.name}** on the server **${guild.name}**\n` +
+                                `- i will stay there 24/7 don't worry <:rRitaMaid:1494319991187574794>\n\n` +
+                                `---\n\n` +
+                                `-# <a:rPurple:1493250339359555654> if u want to change the channel or server just run the cmd /change-place and follow the ֆtep ⁘`
+                            );
+                        await logChannel.send({ embeds: [logEmbed] }).catch(() => null);
                     }
                 }
 
@@ -516,6 +529,7 @@ async function launchSelfbot(userId, token, serverId, channelId, interaction) {
                     deafened: false,
                     camera: false,
                     live: false,
+                    paused: false,
                     username: selfClient.user.username,
                     channelName: channel.name,
                     guildName: guild.name
@@ -784,6 +798,64 @@ mainBot.on('interactionCreate', async (interaction) => {
         }
     }
 
+    if (commandName === '247-pause') {
+        const slot = options.getInteger('slot');
+        const sessionIndex = slot - 1;
+
+        if (!userSessions[sessionIndex]) {
+            return interaction.reply({ content: `<a:rWarning:1494077439670878329> No running session in Slot **${slot}**.`, ephemeral: true }).catch(() => null);
+        }
+
+        stopSpammerLoop(user.id, sessionIndex);
+        userSessions[sessionIndex].tokens.forEach(t => {
+            t.paused = true;
+            try {
+                sendVoicePayload(t.selfClient, t.serverId, null); // Leave voice channel
+            } catch(e){}
+        });
+
+        const pauseEmbed = new EmbedBuilder()
+            .setColor('#2F3136')
+            .setDescription(
+                `<a:rPurple:1493250339359555654> the slot (${slot}) is no longer active ⁘\n\n` +
+                `---\n\n` +
+                `<a:rPurple:1493250339359555654> to get them back into the voice channel use \`/247-resume\`  ⁘`
+            );
+
+        return interaction.reply({ embeds: [pauseEmbed], ephemeral: true }).catch(() => null);
+    }
+
+    if (commandName === '247-resume') {
+        const slot = options.getInteger('slot');
+        const sessionIndex = slot - 1;
+
+        if (!userSessions[sessionIndex]) {
+            return interaction.reply({ content: `<a:rWarning:1494077439670878329> No running session in Slot **${slot}**.`, ephemeral: true }).catch(() => null);
+        }
+
+        const session = userSessions[sessionIndex];
+        session.tokens.forEach(t => {
+            t.paused = false;
+            try {
+                sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, t.deafened, t.camera);
+                if (t.live) {
+                    try { t.selfClient.ws.broadcast(buildStreamPayload(t.serverId, t.channelId, true)); } catch(e){}
+                }
+            } catch(e){}
+        });
+
+        const resumeEmbed = new EmbedBuilder()
+            .setColor('#2F3136')
+            .setDescription(
+                `<a:rPurple:1493250339359555654> your session for the (${slot}) slot is back to the voice channel  ⁘\n\n` +
+                `---\n\n` +
+                `-# - wanna move them ?\n` +
+                `-#  use \`/change-place\` and  follow the step ⁘`
+            );
+
+        return interaction.reply({ embeds: [resumeEmbed], ephemeral: true }).catch(() => null);
+    }
+
     if (commandName === '247-storage') {
         if (userSessions.length === 0) return interaction.reply({ content: MESSAGES.noActiveSessions, ephemeral: true }).catch(() => null);
         
@@ -947,8 +1019,10 @@ mainBot.on('interactionCreate', async (interaction) => {
             session.channelId = newChannelId;
             for (const t of session.tokens) {
                 try {
-                    sendVoicePayload(t.selfClient, newServerId, newChannelId, t.muted, t.deafened, t.camera);
-                    try { t.selfClient.ws.broadcast(buildStreamPayload(newServerId, newChannelId, t.live)); } catch(e){}
+                    if (!t.paused) {
+                        sendVoicePayload(t.selfClient, newServerId, newChannelId, t.muted, t.deafened, t.camera);
+                        try { t.selfClient.ws.broadcast(buildStreamPayload(newServerId, newChannelId, t.live)); } catch(e){}
+                    }
                     t.serverId = newServerId; 
                     t.channelId = newChannelId;
                 } catch (e) {}
@@ -961,8 +1035,10 @@ mainBot.on('interactionCreate', async (interaction) => {
                 session.channelId = newChannelId;
                 for (const t of session.tokens) {
                     try {
-                        sendVoicePayload(t.selfClient, newServerId, newChannelId, t.muted, t.deafened, t.camera);
-                        try { t.selfClient.ws.broadcast(buildStreamPayload(newServerId, newChannelId, t.live)); } catch(e){}
+                        if (!t.paused) {
+                            sendVoicePayload(t.selfClient, newServerId, newChannelId, t.muted, t.deafened, t.camera);
+                            try { t.selfClient.ws.broadcast(buildStreamPayload(newServerId, newChannelId, t.live)); } catch(e){}
+                        }
                         t.serverId = newServerId; 
                         t.channelId = newChannelId;
                     } catch (e) {}
@@ -982,7 +1058,7 @@ mainBot.on('interactionCreate', async (interaction) => {
             if (!targetSlot || targetSlot === idx + 1) {
                 session.tokens.forEach(t => {
                     t.muted = status;
-                    sendVoicePayload(t.selfClient, t.serverId, t.channelId, status, t.deafened, t.camera);
+                    if (!t.paused) sendVoicePayload(t.selfClient, t.serverId, t.channelId, status, t.deafened, t.camera);
                 });
             }
         });
@@ -998,7 +1074,7 @@ mainBot.on('interactionCreate', async (interaction) => {
             if (!targetSlot || targetSlot === idx + 1) {
                 session.tokens.forEach(t => {
                     t.deafened = status;
-                    sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, status, t.camera);
+                    if (!t.paused) sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, status, t.camera);
                 });
             }
         });
@@ -1014,7 +1090,7 @@ mainBot.on('interactionCreate', async (interaction) => {
             if (!targetSlot || targetSlot === idx + 1) {
                 session.tokens.forEach(t => {
                     t.camera = status;
-                    sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, t.deafened, status);
+                    if (!t.paused) sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, t.deafened, status);
                 });
             }
         });
@@ -1030,11 +1106,13 @@ mainBot.on('interactionCreate', async (interaction) => {
             if (!targetSlot || targetSlot === idx + 1) {
                 session.tokens.forEach(t => {
                     t.live = status;
-                    try {
-                        t.selfClient.ws.broadcast(buildStreamPayload(t.serverId, t.channelId, status));
-                        sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, t.deafened, t.camera);
-                    } catch(e){
-                        console.error("Live stream state dispatch failure:", e);
+                    if (!t.paused) {
+                        try {
+                            t.selfClient.ws.broadcast(buildStreamPayload(t.serverId, t.channelId, status));
+                            sendVoicePayload(t.selfClient, t.serverId, t.channelId, t.muted, t.deafened, t.camera);
+                        } catch(e){
+                            console.error("Live stream state dispatch failure:", e);
+                        }
                     }
                 });
             }
@@ -1062,7 +1140,7 @@ mainBot.on('interactionCreate', async (interaction) => {
         
         const activityType = options.getString('activity-type') || 'STREAMING';
         const name = options.getString('name') || "69";
-        const state = options.getString('state') || null; // Subtext state line is null by default
+        const state = options.getString('state') || null;
         const url = options.getString('url') || "https://www.twitch.tv/discord";
         const customAppId = options.getString('application-id');
         
@@ -1213,7 +1291,8 @@ mainBot.on('interactionCreate', async (interaction) => {
             session.tokens.forEach((t, tIdx) => {
                 const gName = t.selfClient.guilds.cache.get(t.serverId)?.name || "Unknown Server";
                 const cName = t.selfClient.channels.cache.get(t.channelId)?.name || "Unknown Channel";
-                resText += `<a:rArrow:1493252548826763275> Account ${tIdx + 1}: **${t.username}** | Voice: \`${cName}\` | Server: \`${gName}\`\n`;
+                const pStatus = t.paused ? " ⏸️ (Paused)" : "";
+                resText += `<a:rArrow:1493252548826763275> Account ${tIdx + 1}: **${t.username}**${pStatus} | Voice: \`${cName}\` | Server: \`${gName}\`\n`;
             });
             resText += `\n`;
         });
