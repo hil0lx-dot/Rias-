@@ -107,16 +107,10 @@ const MESSAGES = {
     restartingAll: `**🔄 Restarting all active sessions and re-verifying connection gateways...**`,
     restartingSlot: (slot) => `**🔄 Restarting active session slot ${slot}...**`,
     buildSuccessLine: (username, channelName, guildName) => `⁘<a:rSuccess:1494078302632149083> • The **${username}** has successfully joined **${channelName}** on the server **${guildName}**\n`,
-    successFooter: `- i will stay there 24/7 don't worry <:rRitaMaid:1494319991187574794>\n\n---\n\n-# <a:rPurple:1493250339359555654> if u want to change the channel or server just run the cmd /change-place and follow the ֆtep ⁘`
+    successFooter: `- i will stay there 24/7 don't worry <:rRitaMaid:1494319991187574794>\n\n-# <a:rPurple:1493250339359555654> if u want to change the channel or server just run the cmd /change-place and follow the ֆtep ⁘`
 };
 
-const TICKET_PANEL_DESC = `- __We want to keep our community safe, friendly, and fun for everyone. To help with this, we have a report system you can use to tell us about any problems or questions you have. Here's a quick look at the different parts of our report system:__  ⁘\n\n` +
-`- <:rAllumix:1493253489130733600>  **Pub** : \`Report spam or pub\` \n\n` +
-`- <:rBughunter:1493253428695011409> **Bugs** : \`Report bugs or issues\` \n\n` +
-`- <:rDiscord_employe:1493323538487054435>  **Abuse** : \`Report abuse or harassment\` \n\n` +
-`- <:rquarantined:1493324162155024415> **Server** : \`Bot info or requests\` \n\n` +
-`- <:rbans:1493323589145989140> **Staff Abuse** : \`Report staff issues\` \n\n\n` +
-`- <:rHmm:1494304201319252170>   __Use these modules for assistance or to report issues. Our team is here to help!__`;
+const TICKET_PANEL_DESC = `- __We want to keep our community safe, friendly, and fun for everyone. To help with this, we have a report system you can use to tell us about any problems or questions you have. Here's a quick look at the different parts of our report system:__  ⁘`;
 
 mainBot.once('ready', async () => {
     console.log(`🚀 Main bot online: ${mainBot.user.tag}`);
@@ -506,14 +500,19 @@ async function launchSelfbot(userId, token, serverId, channelId, interaction) {
                     const logChannel = await mainBot.channels.fetch(process.env.LOGS_CHANNEL_ID).catch(() => null);
                     if (logChannel) {
                         const logEmbed = new EmbedBuilder()
-                            .setColor('#2F3136')
-                            .setDescription(
-                                `## New Active Session Appeared !\n\n` +
-                                `---\n\n` +
-                                `⁘<a:rSuccess:1494078302632149083> • The **${selfClient.user.username}** has successfully joined **${channel.name}** on the server **${guild.name}**\n` +
-                                `- i will stay there 24/7 don't worry <:rRitaMaid:1494319991187574794>\n\n` +
-                                `---\n\n` +
-                                `-# <a:rPurple:1493250339359555654> if u want to change the channel or server just run the cmd /change-place and follow the ֆtep ⁘`
+                            .setColor('Red')
+                            .setTitle("## New Active Session Appeared !")
+                            .addFields(
+                                { 
+                                    name: "Status", 
+                                    value: `⁘<a:rSuccess:1494078302632149083> • The **${selfClient.user.username}** has successfully joined **${channel.name}** on the server **${guild.name}**\n- i will stay there 24/7 don't worry <:rRitaMaid:1494319991187574794>`, 
+                                    inline: true 
+                                },
+                                { 
+                                    name: "Info", 
+                                    value: `-# <a:rPurple:1493250339359555654> if u want to change the channel or server just run the cmd /change-place and follow the ֆtep ⁘`, 
+                                    inline: true 
+                                }
                             );
                         await logChannel.send({ embeds: [logEmbed] }).catch(() => null);
                     }
@@ -645,9 +644,16 @@ mainBot.on('interactionCreate', async (interaction) => {
 
         if (customId === 'setup_btn_mode') {
             const panelEmbed = new EmbedBuilder()
-                .setColor("#2F3136")
+                .setColor("Red")
                 .setTitle("<:rTicket:1493253531644203098>   Rias • Ticket Support System")
-                .setDescription(TICKET_PANEL_DESC);
+                .setDescription(TICKET_PANEL_DESC)
+                .addFields(
+                    { name: '<:rAllumix:1493253489130733600> Pub', value: '`Report spam or pub`', inline: true },
+                    { name: '<:rBughunter:1493253428695011409> Bugs', value: '`Report bugs or issues`', inline: true },
+                    { name: '<:rDiscord_employe:1493323538487054435> Abuse', value: '`Report abuse or harassment`', inline: true },
+                    { name: '<:rquarantined:1493324162155024415> Server', value: '`Bot info or requests`', inline: true },
+                    { name: '<:rbans:1493323589145989140> Staff Abuse', value: '`Report staff issues`', inline: true }
+                );
 
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId('tk_pub').setLabel('Pub').setEmoji('1493253489130733600').setStyle(ButtonStyle.Secondary),
@@ -663,9 +669,16 @@ mainBot.on('interactionCreate', async (interaction) => {
 
         if (customId === 'setup_menu_mode') {
             const panelEmbed = new EmbedBuilder()
-                .setColor("#2F3136")
+                .setColor("Red")
                 .setTitle("<:rTicket:1493253531644203098>   Rias • Ticket Support System")
-                .setDescription(TICKET_PANEL_DESC);
+                .setDescription(TICKET_PANEL_DESC)
+                .addFields(
+                    { name: '<:rAllumix:1493253489130733600> Pub', value: '`Report spam or pub`', inline: true },
+                    { name: '<:rBughunter:1493253428695011409> Bugs', value: '`Report bugs or issues`', inline: true },
+                    { name: '<:rDiscord_employe:1493323538487054435> Abuse', value: '`Report abuse or harassment`', inline: true },
+                    { name: '<:rquarantined:1493324162155024415> Server', value: '`Bot info or requests`', inline: true },
+                    { name: '<:rbans:1493323589145989140> Staff Abuse', value: '`Report staff issues`', inline: true }
+                );
 
             const menu = new StringSelectMenuBuilder()
                 .setCustomId('ticket_select_menu')
@@ -706,7 +719,7 @@ mainBot.on('interactionCreate', async (interaction) => {
             if (!ticketChan) return interaction.editReply({ content: "❌ Error generating channel permissions frame." });
 
             const innerEmbed = new EmbedBuilder()
-                .setColor("#2F3136")
+                .setColor("Red")
                 .setTitle(`🎫 Department Connection: ${typeSelected}`)
                 .setDescription(`Welcome to your request thread <@${user.id}>.\nOur management staff node has been initialized. State your case details below clearly.`);
 
@@ -740,7 +753,7 @@ mainBot.on('interactionCreate', async (interaction) => {
             if (!ticketChan) return interaction.editReply({ content: "❌ Error generating channel dropdown location frame." });
 
             const innerEmbed = new EmbedBuilder()
-                .setColor("#2F3136")
+                .setColor("Red")
                 .setTitle(`🎫 Department Connection: ${typeSelected}`)
                 .setDescription(`Welcome to your request thread <@${user.id}>.\nOur management staff node has been initialized. State your case details below clearly.`);
 
@@ -815,11 +828,10 @@ mainBot.on('interactionCreate', async (interaction) => {
         });
 
         const pauseEmbed = new EmbedBuilder()
-            .setColor('#2F3136')
-            .setDescription(
-                `<a:rPurple:1493250339359555654> the slot (${slot}) is no longer active ⁘\n\n` +
-                `---\n\n` +
-                `<a:rPurple:1493250339359555654> to get them back into the voice channel use \`/247-resume\`  ⁘`
+            .setColor('Red')
+            .addFields(
+                { name: 'Slot Status', value: `<a:rPurple:1493250339359555654> the slot (${slot}) is no longer active ⁘`, inline: true },
+                { name: 'Action', value: `<a:rPurple:1493250339359555654> to get them back into the voice channel use \`/247-resume\` ⁘`, inline: true }
             );
 
         return interaction.reply({ embeds: [pauseEmbed], ephemeral: true }).catch(() => null);
@@ -845,12 +857,10 @@ mainBot.on('interactionCreate', async (interaction) => {
         });
 
         const resumeEmbed = new EmbedBuilder()
-            .setColor('#2F3136')
-            .setDescription(
-                `<a:rPurple:1493250339359555654> your session for the (${slot}) slot is back to the voice channel  ⁘\n\n` +
-                `---\n\n` +
-                `-# - wanna move them ?\n` +
-                `-#  use \`/change-place\` and  follow the step ⁘`
+            .setColor('Red')
+            .addFields(
+                { name: 'Slot Status', value: `<a:rPurple:1493250339359555654> your session for the (${slot}) slot is back to the voice channel ⁘`, inline: true },
+                { name: 'Need Movement?', value: `-# use \`/change-place\` and follow the step ⁘`, inline: true }
             );
 
         return interaction.reply({ embeds: [resumeEmbed], ephemeral: true }).catch(() => null);
